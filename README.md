@@ -28,6 +28,10 @@ You can also check the test case folder to see the actual and expected output fi
 
 You can also include `-v` flag to print the output, if any test fails.
 
+## Test cases
+Test cases 01-13 are copied from project specification.
+Cases 14 and up are custom, but they should still conform to the spec.
+
 If you want to make your own test cases, you can just add it into `test-cases` folder. Every use case has its own folder with given command to run and correct output.
 The command is stored in the `in.txt` file.
 The reference output is stored in the `out.txt` file
