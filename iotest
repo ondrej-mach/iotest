@@ -24,7 +24,7 @@ for test in $tests; do
 
 	eval "$command" >"$testfile" 2>/dev/null
 
- 	diff --ignore-trailing-space --strip-trailing-cr "$testfile" "$outfile" >/dev/null
+ 	diff --strip-trailing-cr "$testfile" "$outfile" >/dev/null
 
 	if [ $? -eq 0 ]; then
 		echo -e "$GREEN$TICK $test: $command$NOCOLOR"
