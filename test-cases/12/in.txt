@@ -1,0 +1,1 @@
+./tradelog -w 10 -t FB -t JNJ -t WMT graph-pos stock-6.log

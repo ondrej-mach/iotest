@@ -1,0 +1,1 @@
+./tradelog hist-ord stock-2.log

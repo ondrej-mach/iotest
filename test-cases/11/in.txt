@@ -1,0 +1,1 @@
+./tradelog -w 100 graph-pos stock-6.log

@@ -1,0 +1,1 @@
+./tradelog pos stock-2.log

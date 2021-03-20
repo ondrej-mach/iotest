@@ -1,0 +1,1 @@
+./tradelog -t CVX stock-4.log.gz | head -n 3
