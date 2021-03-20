@@ -1,0 +1,1 @@
+./tradelog -b 2021-07-29 19:02:42 stock-2.log
