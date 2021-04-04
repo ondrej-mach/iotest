@@ -36,3 +36,6 @@ If you want to make your own test cases, you can just add it into `test-cases` f
 The command is stored in the `in.txt` file.
 The reference output is stored in the `out.txt` file
 After the test is run, `test_output.txt` is created. In it you can find the actual output of your program.
+
+## License
+This software is provided under MIT license.
