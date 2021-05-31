@@ -1,0 +1,291 @@
+#!/bin/sh
+
+export POSIXLY_CORRECT=yes
+export LC_NUMERIC=en_US.UTF-8
+
+help() {
+cat <<__END__
+Usage: tradelog [-h|--help] [FILTER] [COMMAND] [LOG] [LOG2] [...]
+
+Options:
+    COMMAND can be one of the following:
+    list-tick - list all the tichers in the logs.
+    profit - print total profit of closed positions.
+    pos - print value of currently owned positions.
+    last-price - print last known price of each ticker.
+    hist-ord - print chart with number of transactions of each ticker.
+    graph-pos - print chart of value of currently owned positions.
+
+    FILTER can be one of the following:
+    -a DATETIME - only transactions after this date are displayed. DATETIME is in "YYYY-MM-DD HH:MM:SS" format.
+    -b DATETIME - only transactions before this date are displayed.
+    -t TICKER - only transactions with this ticker are displayed. Can be used multiple times.
+    -w WIDTH - sets the width of the widest line of the chart. WIDTH is a positive whole number.
+
+    -h a --help - prints out help with a brief description.
+__END__
+}
+
+# after and before variables will not be set,
+# or they will contain exactly one date in specified format
+after=""
+before=""
+# this variable will stay unset,
+# or it will contain one or more tickers in regex format
+tickers=""
+# this variable will stay unset or it will contain an integer
+width=""
+
+# parse all arguments
+while [ "$1" ]; do
+    case $1 in
+        -a)
+            [ "$after" ] && { echo "-a can be specified only once" >&2; exit 1; }
+            if ! (echo "$2" | grep -q -E '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$'); then
+                echo "Use YYYY-MM-DD HH:MM:SS for -a" >&2
+                exit 1
+            fi
+            after="$2"
+            shift
+            ;;
+
+        -b)
+            [ "$before" ] && { echo "-b can be specified only once" >&2; exit 1; }
+            if ! (echo "$2" | grep -q -E '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$'); then
+                echo "Use YYYY-MM-DD HH:MM:SS for -b" >&2
+                exit 1
+            fi
+            before="$2"
+            shift
+            ;;
+
+        -t) # TODO check any whitespace
+            if ! (echo "$2" | grep -q -E '^[^ ;]*$'); then
+                echo "Invalid ticker" >&2
+                exit 1
+            fi
+            [ "$tickers" ] && tickers="$tickers|^$2\$" || tickers="^$2\$"
+            shift
+            ;;
+
+        -w)
+            if ! (echo "$2" | grep -q -E '^[0-9]*$'); then
+                echo "Width has to be an integer" >&2
+                exit 1
+            fi
+            width="$2"
+            shift
+            ;;
+
+        -h | --help)
+            help
+            exit 0
+            ;;
+
+        list-tick | profit | pos | last-price | hist-ord | graph-pos)
+            [ "$command" ] && { echo "Can only use one command at a time" >&2; exit 1; }
+            command=$1
+            ;;
+
+        *)
+            filename=$1
+            # if the last 3 charactes of filename are ".gz"
+            if [ "$(printf "%s" "$filename" | tail -c 3)" = .gz ]; then
+                input_files_gzip="$input_files_gzip $1"
+            else
+                input_files="$input_files $1"
+            fi
+            ;;
+    esac
+    shift
+done
+
+if [ "$input_files_gzip" ]; then
+    cat_all_logs="gzip -cdf $input_files_gzip"
+    # if there are also normal log files, append them
+    [ "$input_files" ] && cat_all_logs="$cat_all_logs | cat - $input_files "
+
+elif [ "$input_files" ]; then
+    # if only normal log files are specified
+    cat_all_logs="cat $input_files "
+
+else
+    # if no files were specified, use stdin
+    cat_all_logs="cat <&0"
+fi
+
+filters="1" # true by default, matches every line
+[ "$after" ] && filters="$filters && (\$1 > \"$after\")"
+[ "$before" ] && filters="$filters && (\$1 < \"$before\")"
+[ "$tickers" ] && filters="$filters && (\$2 ~ \"$tickers\")"
+
+case $command in
+    "")
+        # if there is no command, just read and filter all the input files
+        awk_command="awk -F ';' '$filters'"
+        post_command="cat"
+        ;;
+
+    list-tick)
+        awk_command="awk -F ';' '$filters {print \$2}'"
+        post_command="sort -u"
+        ;;
+
+    profit)
+        awk_command="awk -F ';' '
+            $filters {
+                if(\$3 == \"buy\") {
+                    sum -= \$4*\$6
+                } else {
+                    sum += \$4*\$6
+                }
+            }
+            END {
+                printf \"%.2f\n\", sum
+            }
+        '"
+        post_command="cat"
+        ;;
+
+    pos)
+        awk_command="awk -F ';' '
+            $filters {
+                if(\$1 > lastTime[\$2]) {
+                    lastTime[\$2] = \$1;
+                    lastPrice[\$2] = \$4;
+                }
+                if(\$3 == \"buy\") {
+                    units[\$2] += \$6;
+                } else {
+                    units[\$2] -= \$6;
+                }
+            }
+            END {
+                longest = 0;
+                for (ticker in units) {
+                    pos[ticker] = units[ticker]*lastPrice[ticker];
+                    pos[ticker] = sprintf(\"%.2f\", pos[ticker])
+                    if (length(pos[ticker]) > longest) {
+                        longest = length(pos[ticker]);
+                    }
+                }
+                for (ticker in pos) {
+                    printf \"%-10s: %*s\\n\", ticker, longest, pos[ticker];
+                }
+            }
+        '"
+        post_command="sort -t: -n -k2 -r"
+        ;;
+
+    last-price)
+        awk_command="awk -F ';' '
+            $filters {
+                if(\$1 > lastTime[\$2]) {
+                    lastTime[\$2] = \$1; lastPrice[\$2] = \$4;
+                }
+            }
+            END {
+                longest = 0;
+                for (ticker in lastPrice) {
+                    if (length(lastPrice[ticker]) > longest) {
+                        longest = length(lastPrice[ticker]);
+                    }
+                }
+                for (ticker in lastPrice) {
+
+                    printf \"%-10s: %*s\\n\", ticker, longest, lastPrice[ticker];
+                }
+            }
+        '"
+        post_command="sort"
+        ;;
+
+    hist-ord)
+        awk_command="awk -F ';' -v width=$width '
+            $filters {
+                if(\$1 > lastTime[\$2]) {
+                    lastTime[\$2] = \$1;
+                    lastPrice[\$2] = \$4;
+                }
+                num[\$2]++;
+            }
+            END {
+                max = 0;
+                for (ticker in num) {
+                    if (num[ticker] > max) {
+                        max = num[ticker];
+                    }
+                }
+                for (ticker in num) {
+                    printf \"%-10s: \", ticker;
+                    if (width != \"\") {
+                        numSymbols = width*num[ticker]/max;
+                    } else {
+                        numSymbols = num[ticker];
+                    }
+                    for (i=1; i<=numSymbols; i++) {
+                        printf \"#\";
+                    }
+                    printf \"\n\";
+                }
+            }
+        '"
+        post_command="sort"
+        ;;
+
+    graph-pos)
+        awk_command="awk -F ';' -v width=$width '
+            $filters {
+                if(\$1 > lastTime[\$2]) {
+                    lastTime[\$2] = \$1;
+                    lastPrice[\$2] = \$4;
+                }
+                if(\$3 == \"buy\") {
+                    units[\$2] += \$6;
+                } else {
+                    units[\$2] -= \$6;
+                }
+            }
+            function abs(x) { return x > 0 ? x : -x }
+            END {
+                max = 0;
+                for (ticker in units) {
+                    pos[ticker] = units[ticker]*lastPrice[ticker];
+                    if (abs(pos[ticker]) > max) {
+                        max = abs(pos[ticker]);
+                    }
+                }
+                for (ticker in pos) {
+                    printf \"%-10s:\", ticker;
+                    if (width != \"\") {
+                        numSymbols = width*pos[ticker]/max;
+                    } else {
+                        numSymbols = pos[ticker]/1000;
+                    }
+                    character = \"#\";
+                    if (numSymbols < 0) {
+                        numSymbols = -numSymbols;
+                        character = \"!\";
+                    }
+                    if (numSymbols > 1) {
+                        printf \" \";
+                    }
+                    for (i=1; i<=numSymbols; i++) {
+                        printf \"%s\", character;
+                    }
+                    printf \"\n\";
+                }
+            }
+        '"
+        post_command="sort"
+        ;;
+esac
+
+# if any command in pipeline fails, it will send SIGUSR1 to this process
+# alternative in bash would be "set -o pipefail"
+trap 'echo "Error while processing" >&2; exit 1' USR1
+cat_all_logs="{ $cat_all_logs || kill -s USR1 $$; }"
+awk_command="{ $awk_command || kill -s USR1 $$; }"
+post_command="{ $post_command || kill -s USR1 $$; }"
+
+eval "$cat_all_logs | $awk_command | $post_command"
